@@ -77,6 +77,7 @@ class ApiController < ApplicationController
 
   def signin 
     rokTrajanja = 7200
+    sleep(2)
 
     if (!params.has_key?(:login) ||  !params.has_key?(:password))
       return render json: {"value"=>{}, "error"=> true, "errorCode"=>"Morate osigurati login i password"}
@@ -92,7 +93,7 @@ class ApiController < ApplicationController
         if (pp == params[:password])
             #return render json: {"value"=>{"baza":user[:password_digest]}, "error"=> false, "errorCode"=>"no error"}
         else 
-          return render json: {"value"=>{"baza":user[:password_digest]}, "error"=> true, "errorCode"=>"Username i password kombinacija nije ispravna"}
+          return render json: {"value"=>{}, "error"=> true, "errorCode"=>"Username i password kombinacija nije ispravna"}
         end
     end
 
