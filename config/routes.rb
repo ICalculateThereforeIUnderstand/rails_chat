@@ -5,6 +5,9 @@ Rails.application.routes.draw do
   # root "articles#index"
 
   root "api#pocetak"
+  post '/api/update_user', to: 'api#updateUser'
+  post '/api/predvorje', to: 'api#predvorje'
+
   post '/api/signin', to: 'api#signin'
   post '/api/signup', to: 'api#signup'
   post '/api/signout', to: 'api#signout'

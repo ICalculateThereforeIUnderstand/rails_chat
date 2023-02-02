@@ -1,0 +1,3 @@
+class Kanali < ApplicationRecord
+  
+end

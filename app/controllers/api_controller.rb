@@ -16,7 +16,8 @@ module ApiHelper
           return {"value"=>{}, "error"=> true, "errorCode"=>"Vas token je istekao"}
       end
 
-      return true
+      #return true
+      return token[:user_id]
   end
 
 end
@@ -27,15 +28,46 @@ class ApiController < ApplicationController
   end
 
   def zasticena 
-    var = helpers.provjeri_token()
-    if (var != true)
-      render json: var
+    userID = helpers.provjeri_token()
+    #if (var != true)
+    if (userID.class == Hash)
+      render json: userID
     else
-    
-
       # authentikacija je prosla 
-      return render json: {"value"=>{"vrijeme": 123}, "error"=> false, "errorCode"=>"no error"}
+      return render json: {"value"=>{"vrijeme": userID}, "error"=> false, "errorCode"=>"no error"}
 
+    end
+  end
+
+  def predvorje 
+    sleep(1)
+    rez = Kanali.connection.select_all("SELECT COUNT(id_korisnika) as count, ime FROM kanalis LEFT OUTER JOIN vezes ON id_sobe = kanalis.id GROUP BY ime ORDER BY count DESC");
+    return render json: {"value"=>{"sobe": rez}, "error"=> false, "errorCode"=>"no error"}
+  end
+
+  def updateUser
+    sleep(4)
+    userID = helpers.provjeri_token()
+    #if (var != true)
+    if (userID.class == Hash)
+      render json: userID
+    else
+      user = User.find(userID)
+      if (params.has_key?(:spol))
+        user[:spol] = params[:spol]
+      end
+      if (params.has_key?(:godine))
+        user[:godine] = params[:godine]
+      end
+      if (params.has_key?(:slogan))
+        user[:slogan] = params[:slogan]
+      end
+
+      if (user.save)
+        return render json: {"value"=>{}, "error"=> false, "errorCode"=>"no error"}
+      else 
+        return render json: {"value"=>{}, "error"=> true, "errorCode"=>"snimanje u bazu podataka nije uspijelo"}
+      end   
     end
   end
 
