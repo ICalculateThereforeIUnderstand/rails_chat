@@ -1,0 +1,3 @@
+class Veze < ApplicationRecord
+  
+end
