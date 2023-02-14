@@ -23,9 +23,33 @@ module ApiHelper
       return token[:user_id]
   end
 
+  def procisti_bazu()
+    # ovu funkciju pozivamo svakih n minuta prilikom refresh requesta
+    # ona neaktivne usere brise iz soba, zatim tim sobama postavlja
+    # timestamp na kolonu zadnja_promjena, i brise sve tokene koji su
+    # revoked ili istekli. 
+    # pretrazivanje tokena po vremenu isteka je vrlo efikasno zbog indexa,
+    # pa ne moras birsati u u3 liniji tokene koji su istekli ili koji su revoked. to je opcionalno
+
+    u1 = Kanali.connection.select_all("UPDATE kanalis SET zadnja_promjena = UTC_TIMESTAMP() WHERE id IN (SELECT id_sobe FROM vezes WHERE id_korisnika NOT IN (SELECT user_id FROM tokens WHERE revoked_at IS NULL AND unix_timestamp(UTC_TIMESTAMP()) < tokens.expires_at GROUP BY user_id) GROUP BY id_sobe)")
+    u2 = Veze.connection.select_all("DELETE FROM vezes WHERE id_korisnika NOT IN (SELECT user_id FROM tokens WHERE revoked_at IS NULL AND unix_timestamp(UTC_TIMESTAMP()) < tokens.expires_at GROUP BY user_id)")
+    
+    #u3 = Token.connection.select_all("DELETE FROM tokens WHERE revoked_at IS NOT NULL OR unix_timestamp(UTC_TIMESTAMP()) - unix_timestamp(tokens.created_at) > expires_in");
+    
+    # ova tri querija ne moraju biti u transakciji. ako jedan ili vise njih
+    # se ne provede, nema nikakve stete ni nekonzistentnosti baze.
+    # treci brise neaktivne tokene, a prva dva querija ovise o aktivnim.
+    # ukoliko prvi ne prode, uklonjeni useri ce ostati na listama korisnika
+    # do sljedeceg input nove poruke. kada pokrenemo sljedeci put procisti_bazu,
+    # sve ce biti ponisteno sto treba i postavljeno na ispravno novo stanje. 
+  end
+
 end
 
 class ApiController < ApplicationController
+  @@timer = 0;
+  @@rokTrajanja = 60 * 15
+
   def pocetak
     return render json: {"value"=>{}, "error"=> false, "errorCode"=>"ovo je root stranica"}
   end
@@ -48,7 +72,8 @@ class ApiController < ApplicationController
     if (userID.class == Hash)
       render json: userID
     else
-      return render json: {"value"=>{}, "error"=> false, "errorCode"=>"no error"}
+      tim = Time.now.utc
+      return render json: {"offset": Time.now.utc_offset, "value"=>{"vrijeme1":Time.now.utc.to_i, "vrijeme2":Time.now.to_i, "vrijeme3":Time.now.getutc.to_i}, "error"=> false, "errorCode"=>"no error"}
     end
   end
 
@@ -59,6 +84,14 @@ class ApiController < ApplicationController
       render json: userID
     else
       # authentikacija je prosla 
+
+      #@@timer += 1
+      time = Time.now.utc.to_i
+      time1 = time - @@timer
+      if (time1 > 0 && true)
+        @@timer = time + 300
+        helpers.procisti_bazu()
+      end
       
       #uvjet = Adrese.sanitize_sql_for_conditions(["?",s])
       #adrese = Adrese.connection.select_all("SELECT veze1.kodknjige FROM adrese INNER JOIN veze1 ON veze1.kodadrese = adrese.id WHERE adrese.adresa = " + uvjet)
@@ -68,21 +101,39 @@ class ApiController < ApplicationController
       #strQuery = " INNER JOIN veze1 ON veze1.kodknjige = knjiges.id INNER JOIN adrese ON veze1.kodadrese = adrese.id INNER JOIN skladista ON skladista.id = adrese.kodskladista"
       #@adrese = Skladista.connection.select_all("SELECT adrese.adresa FROM adrese INNER JOIN skladista ON skladista.id = adrese.kodskladista WHERE TRUE" + @uvjet5);
       if (params[:akcija] == "refresh")
-        sobaID = User.sanitize_sql_for_conditions(["?",params["sobaID"]])
-        userIDs = User.sanitize_sql_for_conditions(["?",userID])
-        users = User.connection.select_all("SELECT users.id as id, name, spol, godine, slogan, id_slike FROM users INNER JOIN vezes ON users.id = id_korisnika WHERE id_sobe = " + sobaID + " AND id_sobe IN (SELECT id_sobe FROM vezes WHERE id_korisnika = " + userIDs + ") ORDER BY name")
-      
-        porukaID = User.sanitize_sql_for_conditions(["?",params["zadnjaPoruka"]])
-        #poruke = User.connection.select_all("SELECT porukes.id, poruka, id_materijala, id_korisnika, porukes.created_at, name, spol, users.id as userID, id_slike FROM porukes INNER JOIN users ON users.id = id_korisnika WHERE porukes.id > " + porukaID + " AND id_sobe = " + sobaID);
-        poruke = User.connection.select_all("SELECT porukes.id, poruka, id_materijala, porukes.id_korisnika, porukes.created_at, name, spol, users.id as userID, id_slike FROM porukes INNER JOIN users ON users.id = id_korisnika WHERE porukes.id > " + porukaID + " AND porukes.id_sobe = " + sobaID + " AND porukes.id_sobe IN (SELECT vezes.id_sobe FROM vezes WHERE vezes.id_korisnika = " + userIDs + ")");
-        #timeDifference = params[:trenutnoVrijeme].to_i - Time.now.utc.hour
-        return render json: {"value"=>{"users": users, "poruke":poruke}, "error"=> false, "errorCode"=>"no error"}
+        time = Kanali.find(params["sobaID"])[:zadnja_promjena].to_i
+        if (params[:timeStamp] > time)
+          return render json: {"value"=>{"users": [], "poruke":[], "timeStamp": time, "updateSw": false}, "error"=> false, "errorCode"=>"no error"}
+        else 
+          sobaID = User.sanitize_sql_for_conditions(["?",params["sobaID"]])
+          userIDs = User.sanitize_sql_for_conditions(["?",userID])
+       
+          users = User.connection.select_all("SELECT users.id as id, name, spol, godine, slogan, id_slike FROM users INNER JOIN vezes ON users.id = id_korisnika WHERE id_sobe = " + sobaID + " AND id_sobe IN (SELECT id_sobe FROM vezes WHERE id_korisnika = " + userIDs + ") ORDER BY name")
+  
+          #poruke = User.connection.select_all("SELECT porukes.id, poruka, id_materijala, id_korisnika, porukes.created_at, name, spol, users.id as userID, id_slike FROM porukes INNER JOIN users ON users.id = id_korisnika WHERE porukes.id > " + porukaID + " AND id_sobe = " + sobaID);
+          if (params["zadnjaPoruka"] > 0)
+            porukaID = User.sanitize_sql_for_conditions(["?",params["zadnjaPoruka"]])
+            poruke = User.connection.select_all("SELECT porukes.id, poruka, id_materijala, porukes.id_korisnika, porukes.created_at, name, spol, users.id as userID, id_slike FROM porukes INNER JOIN users ON users.id = id_korisnika WHERE porukes.id > " + porukaID + " AND porukes.id_sobe = " + sobaID + " AND porukes.id_sobe IN (SELECT vezes.id_sobe FROM vezes WHERE vezes.id_korisnika = " + userIDs + ")");
+          else 
+            porukaID = (-1*params["zadnjaPoruka"]).to_s
+            poruke = User.connection.select_all("(SELECT porukes.id, poruka, id_materijala, porukes.id_korisnika, porukes.created_at, name, spol, users.id as userID, id_slike FROM porukes INNER JOIN users ON users.id = id_korisnika WHERE porukes.id_sobe = " + sobaID + " AND porukes.id_sobe IN (SELECT vezes.id_sobe FROM vezes WHERE vezes.id_korisnika = " + userIDs + ") ORDER BY porukes.id DESC LIMIT " + porukaID + ") ORDER BY id");
+          end
+          #timeDifference = params[:trenutnoVrijeme].to_i - Time.now.utc.hour
+          return render json: {"value"=>{"porukaID":porukaID, "users": users, "poruke":poruke, "timeStamp": time, "updateSw": true}, "error"=> false, "errorCode"=>"no error"}
+        end
       elsif (params[:akcija] === "dodajPoruku")
         poruka = Poruke.new
         poruka[:id_sobe] = params[:sobaID]
         poruka[:poruka] = params[:poruka]
         poruka[:id_korisnika] = userID 
         if poruka.save 
+          time = poruka[:created_at]
+          kan = Kanali.find(params[:sobaID])
+          protekloVrijeme = time.to_i - kan[:zadnja_promjena].to_i
+          if (protekloVrijeme >= 0)
+            kan[:zadnja_promjena] = time
+            kan.save 
+          end  
           sobaID = User.sanitize_sql_for_conditions(["?",params["sobaID"]])
           userIDs = User.sanitize_sql_for_conditions(["?",userID])
           users = User.connection.select_all("SELECT users.id as id, name, spol, godine, slogan, id_slike FROM users INNER JOIN vezes ON users.id = id_korisnika WHERE id_sobe = " + sobaID + " AND id_sobe IN (SELECT id_sobe FROM vezes WHERE id_korisnika = " + userIDs + ") ORDER BY name")
@@ -90,7 +141,7 @@ class ApiController < ApplicationController
           porukaID = User.sanitize_sql_for_conditions(["?",params["zadnjaPoruka"]])
           poruke = User.connection.select_all("SELECT porukes.id, poruka, id_materijala, id_korisnika, porukes.created_at, name, spol, users.id as userID, id_slike FROM porukes INNER JOIN users ON users.id = id_korisnika WHERE porukes.id > " + porukaID + " AND id_sobe = " + sobaID);
           #timeDifference = params[:trenutnoVrijeme].to_i - Time.now.utc.hour
-          return render json: {"value"=>{"users": users, "poruke":poruke}, "error"=> false, "errorCode"=>"no error"}
+          return render json: {"value"=>{"users": users, "poruke":poruke, "timeStamp": time.to_i, "updateSw": true}, "error"=> false, "errorCode"=>"no error"}
         else 
           return render json: {"value"=>{}, "error"=> true, "errorCode"=>"primanje poruke nije uspijelo"}
         end
@@ -148,10 +199,13 @@ class ApiController < ApplicationController
             time = veza[:created_at]
             kan = Kanali.find(params[:sobaID])
             if (!kan.nil?)
-              kan[:zadnja_promjena] = time
-              if (kan.save)
-                return render json: {"value"=>{}, "error"=> false, "errorCode"=>"no error"}    
-              end
+              protekloVrijeme = time.to_i - kan[:zadnja_promjena].to_i
+              if (protekloVrijeme >= 0)
+                kan[:zadnja_promjena] = time
+                if (kan.save)
+                  return render json: {"value"=>{}, "error"=> false, "errorCode"=>"no error"}    
+                end
+              end  
             end
             veza.delete
             return render json: {"value"=>{}, "error"=> true, "errorCode"=>"snimanje nije uspijelo1. Korisnik nije u sobi."}
@@ -167,8 +221,12 @@ class ApiController < ApplicationController
           return render json: {"value"=>{"userID":userID, "soba":params[:sobaID]}, "error"=> true, "errorCode"=>"Korisnik nije pronaden u sobi"}
         else 
           kan = Kanali.find_by(id:params[:sobaID])
-          kan[:zadnja_promjena] = Time.now.utc
-          kan.save
+          time = Time.now.utc
+          protekloVrijeme = time.to_i - kan[:zadnja_promjena].to_i
+          if (protekloVrijeme >= 0)
+            kan[:zadnja_promjena] = time
+            kan.save
+          end
           veza.delete
           return render json: {"value"=>{}, "error"=> false, "errorCode"=>"no error"}
         end
@@ -295,7 +353,7 @@ class ApiController < ApplicationController
   end
 
   def refreshToken 
-    rokTrajanja = 7200
+    #rokTrajanja = 7200
     if (!params.has_key?(:refreshToken))
       return render json: {"value"=>{}, "error"=> true, "errorCode"=>"Morate osigurati refresh token"}
     end
@@ -319,7 +377,7 @@ class ApiController < ApplicationController
       refreshToken = SecureRandom.alphanumeric(40);
       id = tok[:user_id]
       noviTok = Token.new(user_id:id, token:token, refresh_token:refreshToken, 
-                expires_in: rokTrajanja)
+                expires_in: @@rokTrajanja, expires_at: Time.now.utc.to_i + @@rokTrajanja - Time.now.utc_offset)
       if noviTok.save
         return render json: {"value"=>{"token": token, "refreshToken": refreshToken}, "error"=> false, "errorCode"=>"no error"}
       else 
@@ -331,7 +389,7 @@ class ApiController < ApplicationController
   end
 
   def signin 
-    rokTrajanja = 7200
+    #rokTrajanja = 60 * 15
     sleep(2)
 
     if (!params.has_key?(:login) ||  !params.has_key?(:password))
@@ -356,7 +414,7 @@ class ApiController < ApplicationController
     refreshToken = SecureRandom.alphanumeric(40);
     id = user[:id]
     tok = Token.new(user_id:id, token:token, refresh_token:refreshToken, 
-          expires_in: rokTrajanja)
+          expires_in: @@rokTrajanja, expires_at: Time.now.utc.to_i + @@rokTrajanja - Time.now.utc_offset)
     if tok.save
       return render json: {"value"=>{"token": token, "refreshToken": refreshToken}, "error"=> false, "errorCode"=>"no error"}
     else 
@@ -382,7 +440,7 @@ class ApiController < ApplicationController
       if (protekloVrijeme <= expires)
         # brisemo korisnika iz soba u kojima je prijavljen
         userIDs = Kanali.sanitize_sql_for_conditions(["?",token[:user_id]])
-        rez = Kanali.connection.select_all("UPDATE kanalis INNER JOIN vezes ON kanalis.id = id_sobe SET zadnja_promjena = NOW() WHERE id_korisnika = " + userIDs);
+        rez = Kanali.connection.select_all("UPDATE kanalis INNER JOIN vezes ON kanalis.id = id_sobe SET zadnja_promjena = UTC_TIMESTAMP() WHERE id_korisnika = " + userIDs);
         Veze.where(id_korisnika:token[:user_id]).delete_all
       end
       # kraj dodatka
@@ -398,7 +456,7 @@ class ApiController < ApplicationController
   end
 
   def signup
-    rokTrajanja = 7200
+    #rokTrajanja = 60 * 15
 
     if (!User.find_by(name:params[:username]).nil?)
         return render json: {"value"=>{}, "error"=> true, "errorCode"=>"Vec postoji korisnik sa ovim imenom."}
@@ -418,7 +476,7 @@ class ApiController < ApplicationController
       refreshToken = SecureRandom.alphanumeric(40);
       id = u[:id]
       tok = Token.new(user_id:id, token:token, refresh_token:refreshToken, 
-            expires_in: rokTrajanja)
+            expires_in: @@rokTrajanja, expires_at: Time.now.utc.to_i + @@rokTrajanja - Time.now.utc_offset)
       if tok.save
         return render json: {"value"=>{"token": token, "refreshToken": refreshToken}, "error"=> false, "errorCode"=>"no error"}
       else 
