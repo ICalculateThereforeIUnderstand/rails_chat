@@ -8,6 +8,7 @@ Rails.application.routes.draw do
   post '/api/update_user', to: 'api#updateUser'
   post '/api/update_user1', to: 'api#updateUser1'
   get '/api/slika/:id', to: 'api#slika'
+  post '/api/resource', to: 'api#resource'
   post '/api/predvorje', to: 'api#predvorje'
   post '/api/soba', to: 'api#stanjeSobe'
   post '/api/room_enter_exit', to: 'api#roomEnterExit'

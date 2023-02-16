@@ -93,13 +93,6 @@ class ApiController < ApplicationController
         helpers.procisti_bazu()
       end
       
-      #uvjet = Adrese.sanitize_sql_for_conditions(["?",s])
-      #adrese = Adrese.connection.select_all("SELECT veze1.kodknjige FROM adrese INNER JOIN veze1 ON veze1.kodadrese = adrese.id WHERE adrese.adresa = " + uvjet)
-
-      #@odabrani1 = params[:skladiste]
-      #@uvjet5 = Skladista.sanitize_sql_for_conditions([" AND skladista.skladiste = ?",@odabrani1]);
-      #strQuery = " INNER JOIN veze1 ON veze1.kodknjige = knjiges.id INNER JOIN adrese ON veze1.kodadrese = adrese.id INNER JOIN skladista ON skladista.id = adrese.kodskladista"
-      #@adrese = Skladista.connection.select_all("SELECT adrese.adresa FROM adrese INNER JOIN skladista ON skladista.id = adrese.kodskladista WHERE TRUE" + @uvjet5);
       if (params[:akcija] == "refresh")
         time = Kanali.find(params["sobaID"])[:zadnja_promjena].to_i
         if (params[:timeStamp] > time)
@@ -113,10 +106,12 @@ class ApiController < ApplicationController
           #poruke = User.connection.select_all("SELECT porukes.id, poruka, id_materijala, id_korisnika, porukes.created_at, name, spol, users.id as userID, id_slike FROM porukes INNER JOIN users ON users.id = id_korisnika WHERE porukes.id > " + porukaID + " AND id_sobe = " + sobaID);
           if (params["zadnjaPoruka"] > 0)
             porukaID = User.sanitize_sql_for_conditions(["?",params["zadnjaPoruka"]])
-            poruke = User.connection.select_all("SELECT porukes.id, poruka, id_materijala, porukes.id_korisnika, porukes.created_at, name, spol, users.id as userID, id_slike FROM porukes INNER JOIN users ON users.id = id_korisnika WHERE porukes.id > " + porukaID + " AND porukes.id_sobe = " + sobaID + " AND porukes.id_sobe IN (SELECT vezes.id_sobe FROM vezes WHERE vezes.id_korisnika = " + userIDs + ")");
+            #poruke = User.connection.select_all("SELECT porukes.id, poruka, id_materijala, porukes.id_korisnika, porukes.created_at, name, spol, users.id as userID, id_slike FROM porukes INNER JOIN users ON users.id = id_korisnika WHERE porukes.id > " + porukaID + " AND porukes.id_sobe = " + sobaID + " AND porukes.id_sobe IN (SELECT vezes.id_sobe FROM vezes WHERE vezes.id_korisnika = " + userIDs + ")");  
+            poruke = User.connection.select_all("SELECT porukes.id, poruka, id_materijala, porukes.id_korisnika, erase_id, porukes.created_at, name, spol, users.id as userID, id_slike, skladistes.file, skladistes.tip as fileTip, vezes.id_korisnika as viewerID FROM porukes INNER JOIN users ON users.id = porukes.id_korisnika INNER JOIN vezes ON vezes.id_sobe = porukes.id_sobe LEFT OUTER JOIN skladistes ON id_materijala = skladistes.id WHERE porukes.id > " + porukaID + " AND porukes.id_sobe = " + sobaID + " AND vezes.id_korisnika = " + userIDs);
           else 
             porukaID = (-1*params["zadnjaPoruka"]).to_s
-            poruke = User.connection.select_all("(SELECT porukes.id, poruka, id_materijala, porukes.id_korisnika, porukes.created_at, name, spol, users.id as userID, id_slike FROM porukes INNER JOIN users ON users.id = id_korisnika WHERE porukes.id_sobe = " + sobaID + " AND porukes.id_sobe IN (SELECT vezes.id_sobe FROM vezes WHERE vezes.id_korisnika = " + userIDs + ") ORDER BY porukes.id DESC LIMIT " + porukaID + ") ORDER BY id");
+            #poruke = User.connection.select_all("(SELECT porukes.id, poruka, id_materijala, porukes.id_korisnika, porukes.created_at, name, spol, users.id as userID, id_slike FROM porukes INNER JOIN users ON users.id = id_korisnika WHERE porukes.id_sobe = " + sobaID + " AND porukes.id_sobe IN (SELECT vezes.id_sobe FROM vezes WHERE vezes.id_korisnika = " + userIDs + ") ORDER BY porukes.id DESC LIMIT " + porukaID + ") ORDER BY id");
+            poruke = User.connection.select_all("(SELECT porukes.id, poruka, id_materijala, porukes.id_korisnika, erase_id, porukes.created_at, name, spol, users.id as userID, id_slike, skladistes.file, skladistes.tip as fileTip, vezes.id_korisnika as viewerID FROM porukes INNER JOIN users ON users.id = porukes.id_korisnika INNER JOIN vezes ON vezes.id_sobe = porukes.id_sobe LEFT OUTER JOIN skladistes ON id_materijala = skladistes.id WHERE porukes.id_sobe = " + sobaID + " AND vezes.id_korisnika = " + userIDs + " ORDER BY porukes.id DESC LIMIT " + porukaID + ") ORDER BY id");
           end
           #timeDifference = params[:trenutnoVrijeme].to_i - Time.now.utc.hour
           return render json: {"value"=>{"porukaID":porukaID, "users": users, "poruke":poruke, "timeStamp": time, "updateSw": true}, "error"=> false, "errorCode"=>"no error"}
@@ -126,6 +121,19 @@ class ApiController < ApplicationController
         poruka[:id_sobe] = params[:sobaID]
         poruka[:poruka] = params[:poruka]
         poruka[:id_korisnika] = userID 
+
+        if (!params[:file].nil?)
+          skl = Skladiste.new 
+          skl[:ime] = userID 
+          skl[:tip] = params[:fileTip]
+          skl[:file] = params[:file]
+          if skl.save 
+            poruka[:id_materijala] = skl[:id]
+          else 
+            return render json: {"value"=>{}, "error"=> true, "errorCode"=>"primanje filea nije uspijelo"}
+          end
+        end 
+
         if poruka.save 
           time = poruka[:created_at]
           kan = Kanali.find(params[:sobaID])
@@ -139,25 +147,67 @@ class ApiController < ApplicationController
           users = User.connection.select_all("SELECT users.id as id, name, spol, godine, slogan, id_slike FROM users INNER JOIN vezes ON users.id = id_korisnika WHERE id_sobe = " + sobaID + " AND id_sobe IN (SELECT id_sobe FROM vezes WHERE id_korisnika = " + userIDs + ") ORDER BY name")
       
           porukaID = User.sanitize_sql_for_conditions(["?",params["zadnjaPoruka"]])
-          poruke = User.connection.select_all("SELECT porukes.id, poruka, id_materijala, id_korisnika, porukes.created_at, name, spol, users.id as userID, id_slike FROM porukes INNER JOIN users ON users.id = id_korisnika WHERE porukes.id > " + porukaID + " AND id_sobe = " + sobaID);
+          #poruke = User.connection.select_all("SELECT porukes.id, poruka, id_materijala, id_korisnika, porukes.created_at, name, spol, users.id as userID, id_slike FROM porukes INNER JOIN users ON users.id = id_korisnika WHERE porukes.id > " + porukaID + " AND id_sobe = " + sobaID);
+          poruke = User.connection.select_all("SELECT porukes.id, poruka, id_materijala, porukes.id_korisnika, erase_id, porukes.created_at, name, spol, users.id as userID, id_slike, skladistes.file, skladistes.tip as fileTip, vezes.id_korisnika as viewerID FROM porukes INNER JOIN users ON users.id = porukes.id_korisnika INNER JOIN vezes ON vezes.id_sobe = porukes.id_sobe LEFT OUTER JOIN skladistes ON id_materijala = skladistes.id WHERE porukes.id > " + porukaID + " AND porukes.id_sobe = " + sobaID + " AND vezes.id_korisnika = " + userIDs);
+          
           #timeDifference = params[:trenutnoVrijeme].to_i - Time.now.utc.hour
           return render json: {"value"=>{"users": users, "poruke":poruke, "timeStamp": time.to_i, "updateSw": true}, "error"=> false, "errorCode"=>"no error"}
         else 
           return render json: {"value"=>{}, "error"=> true, "errorCode"=>"primanje poruke nije uspijelo"}
         end
+      elsif (params[:akcija] === "obrisiPoruku")
+        poruka = Poruke.find_by(id:params[:eraseID])
+        if (poruka.nil?)
+          return render json: {"value"=>{}, "error"=> true, "errorCode"=>"poruka nije pronadena"}
+        end
+        if (poruka[:id_korisnika] != userID)  
+          return render json: {"value"=>{}, "error"=> true, "errorCode"=>"poruka ne pripada korisniku"}  
+        end
+        time1 = Time.now.utc.to_i
+        time2 = poruka[:created_at].to_i
+        if (time1 - time2 > 240)
+          return render json: {"value"=>{}, "error"=> true, "errorCode"=>"poruka je starija od 120 sekundi"}  
+        end
+
+        poruka1 = Poruke.new 
+        poruka1[:id_sobe] = poruka[:id_sobe]
+        poruka1[:poruka] = "==ovo je poruka koja brise drugu poruku=="
+        poruka1[:id_korisnika] = userID 
+        poruka1[:erase_id] = params[:eraseID]
+        
+        if poruka1.save 
+          time = poruka1[:created_at]
+          kan = Kanali.find(poruka1[:id_sobe])
+          protekloVrijeme = time.to_i - kan[:zadnja_promjena].to_i
+          if (protekloVrijeme >= 0)
+            kan[:zadnja_promjena] = time
+            kan.save 
+          end  
+          sobaID = User.sanitize_sql_for_conditions(["?",poruka1[:id_sobe]])
+          userIDs = User.sanitize_sql_for_conditions(["?",userID])
+          users = User.connection.select_all("SELECT users.id as id, name, spol, godine, slogan, id_slike FROM users INNER JOIN vezes ON users.id = id_korisnika WHERE id_sobe = " + sobaID + " AND id_sobe IN (SELECT id_sobe FROM vezes WHERE id_korisnika = " + userIDs + ") ORDER BY name")
+      
+          porukaID = User.sanitize_sql_for_conditions(["?",params["zadnjaPoruka"]])
+          #poruke = User.connection.select_all("SELECT porukes.id, poruka, id_materijala, id_korisnika, porukes.created_at, name, spol, users.id as userID, id_slike FROM porukes INNER JOIN users ON users.id = id_korisnika WHERE porukes.id > " + porukaID + " AND id_sobe = " + sobaID);
+          poruke = User.connection.select_all("SELECT porukes.id, poruka, id_materijala, porukes.id_korisnika, erase_id, porukes.created_at, name, spol, users.id as userID, id_slike, skladistes.file, skladistes.tip as fileTip, vezes.id_korisnika as viewerID FROM porukes INNER JOIN users ON users.id = porukes.id_korisnika INNER JOIN vezes ON vezes.id_sobe = porukes.id_sobe LEFT OUTER JOIN skladistes ON id_materijala = skladistes.id WHERE porukes.id > " + porukaID + " AND porukes.id_sobe = " + sobaID + " AND vezes.id_korisnika = " + userIDs);          
+          #timeDifference = params[:trenutnoVrijeme].to_i - Time.now.utc.hour
+          return render json: {"value"=>{"users": users, "poruke":poruke, "timeStamp": time.to_i, "updateSw": true}, "error"=> false, "errorCode"=>"no error"}
+        end
+
+        return render json: {"value"=>{}, "error"=> true, "errorCode"=>"brisanje poruke nije uspijelo"}  
       end
 
     end
   end
 
   def predvorje 
-    sleep(1)
+    #sleep(1)
     rez = Kanali.connection.select_all("SELECT ime, kanalis.id as sobaID, COUNT(id_korisnika) as count FROM kanalis LEFT OUTER JOIN vezes ON id_sobe = kanalis.id GROUP BY ime, sobaID ORDER BY count DESC");
     return render json: {"value"=>{"sobe": rez}, "error"=> false, "errorCode"=>"no error"}
   end
 
   def updateUser
-    sleep(4)
+    #sleep(4)
     userID = helpers.provjeri_token()
     #if (var != true)
     if (userID.class == Hash)
@@ -240,6 +290,22 @@ class ApiController < ApplicationController
     end
   end
 
+  def resource 
+    userID = helpers.provjeri_token()
+    if (userID.class == Hash)
+      render json: userID
+    else  # prosla authentikacija
+      skl = Skladiste.find_by(id:params[:resourceID])
+      if (skl.nil?)
+        return render json: {"value"=>{}, "error"=> true, "errorCode"=>"resource nije pronaden"}
+      else
+        file = skl[:file]
+        fileTip = skl[:tip]
+        return render json: {"value"=>{"file":file, "fileTip":fileTip}, "error"=> false, "errorCode"=>"no error"}
+      end
+    end
+  end
+
   def slika
     id = Skladiste.sanitize_sql_like(params[:id])
     # ovdje provjeravamo da li je user cija je slika requestana u javnoj sobi
@@ -266,7 +332,7 @@ class ApiController < ApplicationController
   end
 
   def updateUser1
-    sleep(1)
+    #sleep(1)
     userID = helpers.provjeri_token()
     #if (var != true)
     if (userID.class == Hash)
@@ -390,7 +456,7 @@ class ApiController < ApplicationController
 
   def signin 
     #rokTrajanja = 60 * 15
-    sleep(2)
+    #sleep(2)
 
     if (!params.has_key?(:login) ||  !params.has_key?(:password))
       return render json: {"value"=>{}, "error"=> true, "errorCode"=>"Morate osigurati login i password"}
