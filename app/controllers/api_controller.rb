@@ -51,7 +51,7 @@ class ApiController < ApplicationController
   @@rokTrajanja = 60 * 15
 
   def pocetak
-    return render json: {"value"=>{}, "error"=> false, "errorCode"=>"ovo je root stranica"}
+    return render json: {"value"=>{}, "error"=> false, "errorCode"=>"ovo je root stranica1"}
   end
 
   def zasticena 
