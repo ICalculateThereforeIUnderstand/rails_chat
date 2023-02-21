@@ -92,7 +92,7 @@ class ApiController < ApplicationController
         @@timer = time + 300
         helpers.procisti_bazu()
       end
-      
+
       if (params[:akcija] == "refresh")
         time = Kanali.find(params["sobaID"])[:zadnja_promjena].to_i
         if (params[:timeStamp] > time)
